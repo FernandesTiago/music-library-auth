@@ -43,7 +43,7 @@ rotated.
 ## Running
 
 ```bash
-python ex_claude_026.py
+python MLA.py
 ```
 
 Requires Python 3 and `bcrypt` (`pip install bcrypt`). The SQLite
