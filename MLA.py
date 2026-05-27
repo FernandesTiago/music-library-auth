@@ -1,15 +1,11 @@
 import bcrypt
 import sqlite3
-import os
 from time import sleep
 
 # --------- CLEAR SCREEN ---------
 
 def clear_screen():
-    try:
-        os.system('cls' if os.name == 'nt' else 'clear')
-    except:
-        pass
+    print("\033[H\033[J", end="")
 
 # --------- DATA BASE STRUCTURE ---------
 
@@ -72,7 +68,7 @@ class DataBase:
     def __del__(self):
         try:
             self.connection.close()
-        except:
+        except Exception:
             pass
 
 # --------- USER DATA BASE STRUCTURE ---------
@@ -90,6 +86,19 @@ class UserDataBase:
         type TEXT
     )""")
 
+    def read(self):
+        self.cursor.execute("SELECT * FROM users")
+        return self.cursor.fetchall()
+
+    def get_super_admin_id(self):
+        self.cursor.execute("SELECT id FROM users WHERE type = 'Super Admin' LIMIT 1")
+        row = self.cursor.fetchone()
+        return int(row[0]) if row is not None else None
+
+    def find_by_id(self, find_id):
+        self.cursor.execute("SELECT * FROM users WHERE id = ? ", (find_id,))
+        return self.cursor.fetchone()
+
     def check_user_availability(self, login_username):
         self.cursor.execute("SELECT * FROM users WHERE username = ? ", (login_username,))
         return self.cursor.fetchone()
@@ -106,8 +115,9 @@ class UserDataBase:
         else:
             hashed_password = user[2]
             login_type = user[3]
+            login_id = user[0]
             if bcrypt.checkpw(login_password.encode(), hashed_password.encode()):
-                return login_type
+                return login_id, login_type
             else:
                 return None
 
@@ -116,10 +126,18 @@ class UserDataBase:
         self.connection.close()
         print("User database connection closed.")
 
+    def is_empty(self):
+        self.cursor.execute("SELECT 1 FROM users LIMIT 1")
+        return self.cursor.fetchone() is None
+
+    def promote_demote(self, position, id_to_update):
+        self.cursor.execute("UPDATE users SET type=? WHERE id=?", (position, id_to_update))
+        self.connection.commit()
+
     def __del__(self):
         try:
             self.connection.close()
-        except:
+        except Exception:
             pass
 
 # --------- MENU STRUCTURE ---------
@@ -130,6 +148,7 @@ class Menu:
         self.db = DataBase()
         self.userdb = UserDataBase()
         self.login_type = None
+        self.login_id = None
         self.login_options = {
             "1" : self.login,
             "2" : self.signup
@@ -141,6 +160,15 @@ class Menu:
             "4" : self.delete_song,
             "5" : self.log_out,
             "0" : self.exit_system
+        }
+        self.admin_options = {
+            "1": self.list_songs,
+            "2": self.add_song,
+            "3": self.update_song,
+            "4": self.delete_song,
+            "5": self.update_user,
+            "6": self.log_out,
+            "0": self.exit_system
         }
 
     def menu_screen(self):
@@ -163,6 +191,31 @@ class Menu:
 
                 if choice in self.menu_options:
                     self.menu_options[choice]()
+                    break
+                else:
+                    print("Invalid option, try again!")
+
+    def admin_screen(self):
+        while True:
+
+            clear_screen()
+            print("-=" * 16)
+            print()
+            print("[1] - List songs")
+            print("[2] - Add song")
+            print("[3] - Update song")
+            print("[4] - Delete song")
+            print("[5] - Promote/Demote users")
+            print("[6] - Log out")
+            print("[0] - Exit")
+            print()
+            print("-=" * 16)
+
+            while True:
+                choice = input("> ").strip()
+
+                if choice in self.admin_options:
+                    self.admin_options[choice]()
                     break
                 else:
                     print("Invalid option, try again!")
@@ -201,13 +254,13 @@ class Menu:
             if not login:
                 print("Invalid username or password")
             else:
-                self.login_type = login
-                self.menu_screen()
+                self.login_id, self.login_type = login
+                if self.login_type == "common":
+                    self.menu_screen()
+                else:
+                    self.admin_screen()
 
-    def signup(self):
-        clear_screen()
-        print("-=" * 16)
-        print()
+    def signup_method(self,access):
         while True:
             username = input("Username: ").strip()
             check_username = self.userdb.check_user_availability(username)
@@ -216,15 +269,19 @@ class Menu:
                 continue
             else:
                 password = input("Password: ")
-                if password == "AdminPassword":
-                    password = input("Real password: ")
-                    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-                    self.userdb.new_user(username, hashed.decode(), "admin")
-                    return
-                else:
-                    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-                    self.userdb.new_user(username, hashed.decode(), "common")
-                    return
+                hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+                self.userdb.new_user(username, hashed.decode(), access)
+                return
+
+    def signup(self):
+        clear_screen()
+        print("-=" * 16)
+        print()
+        if self.userdb.is_empty():
+            print("The first sign up created is the Super Admin")
+            self.signup_method("Super Admin")
+        else:
+            self.signup_method("common")
 
     def list_songs(self):
         songs = self.db.read()
@@ -255,7 +312,7 @@ class Menu:
                 try:
                     rating = int(input("Rating: "))
                 except ValueError:
-                    print("Invalid number!! (1-10) ")
+                    print("Invalid number!! (0-10) ")
                     continue
                 else:
                     if 0 <= rating <=10:
@@ -263,7 +320,7 @@ class Menu:
                         print("Song Added!!")
                         return
                     else:
-                        print("Invalid number!! (1-10) ")
+                        print("Invalid number!! (0-10) ")
                         continue
 
     def print_song(self, song):
@@ -350,7 +407,7 @@ class Menu:
                                         try:
                                             upd_rating = int(input("> "))
                                         except ValueError:
-                                            print("Invalid number!! (1-10)")
+                                            print("Invalid number!! (0-10)")
                                             continue
                                         else:
                                             if 0 <= upd_rating <= 10:
@@ -359,7 +416,7 @@ class Menu:
                                                 sleep(3)
                                                 return
                                             else:
-                                                print("Invalid number!! (1-10)")
+                                                print("Invalid number!! (0-10)")
                                                 continue
                                 elif choice == "5":
                                     continue
@@ -410,6 +467,66 @@ class Menu:
                                     else:
                                         print("Invalid answer, try again!")
                                         continue
+
+    def update_user_method(self, action, user, position):
+        while True:
+            status = "demoted" if action == "demote" else "promoted"
+            print(f"Are you sure you want to {action} {user[1]}? (Y/N)")
+            choice = input("> ").strip().upper()
+            if choice == "N":
+                print("Canceling operation...")
+                sleep(3)
+                return
+            elif choice == "Y":
+                self.userdb.promote_demote(position, user[0])
+                print(f"User: {user[1]} {status} successfully")
+                sleep(3)
+                return
+            else:
+                print("Invalid answer")
+                continue
+
+    def update_user(self):
+        if self.login_type == "common":
+            print("You don't have permission to do that")
+            sleep(3)
+            return
+        users = self.userdb.read()
+        for user in users:
+            print(f"ID: {user[0]} | Username: {user[1]} | Position {user[3]}")
+        super_id = self.userdb.get_super_admin_id()
+        if super_id is None:
+            raise RuntimeError("No Super Admin found")
+        while True:
+            choice = input("Which user do you want to promote or demote? (ID) (E to exit)\n> ").strip()
+            if choice.upper() == "E":
+                print("Returning...")
+                sleep(3)
+                return
+            if not choice.isdigit():
+                print("Please enter a numeric ID")
+                continue
+            choice_id = int(choice)
+            if choice_id == int(self.login_id):
+                print("You can't promote/demote yourself")
+                continue
+            if choice_id == int(super_id):
+                print("You can't demote the Super Admin")
+                continue
+            user = self.userdb.find_by_id(choice_id)
+            if user is None:
+                print("No user with that ID")
+                continue
+            print(f"ID: {user[0]} | Username: {user[1]} | Position {user[3]}")
+            if user[3] == "common":
+                self.update_user_method("promote", user, "admin")
+            else:
+                if self.login_type == "admin":
+                    print("Only the Super Admin has permission to demote.")
+                    sleep(3)
+                    continue
+                self.update_user_method("demote", user, "common")
+
     def log_out(self):
         while True:
             clear_screen()
@@ -417,6 +534,7 @@ class Menu:
             choice = input("> ").upper().strip()
             if choice == "Y":
                 self.login_type = None
+                self.login_id = None
                 self.login_screen()
             elif choice == "N":
                 print("Action canceled")
